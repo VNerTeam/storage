@@ -38,9 +38,13 @@ const TAG_RE = /^video-storage(-\d+)?$/;
 const $ = (id) => document.getElementById(id);
 let items = [], nRel = 0;
 
+// Repo chứa release video. Để trống = tự đoán theo địa chỉ trang (vd vnerteam.github.io/storage/ → vnerteam/storage).
+// Nếu release nằm ở repo khác với repo chứa trang này, điền vào đây, vd: 'VNerTeam/storage'
+const REPO = '';
 function repoName() {
   const p = new URLSearchParams(location.search).get('repo');
   if (p && /^[\w.-]+\/[\w.-]+$/.test(p)) return p;
+  if (/^[\w.-]+\/[\w.-]+$/.test(REPO)) return REPO;
   if (!location.hostname.endsWith('.github.io')) return null;
   const owner = location.hostname.split('.')[0];
   const segs = location.pathname.split('/').filter((s) => s && s !== 'index.html');

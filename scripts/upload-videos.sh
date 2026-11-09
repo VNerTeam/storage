@@ -26,19 +26,19 @@ if [[ -d inbox ]]; then
 fi
 if (( ${#zips[@]} == 0 )); then echo "Không có file zip nào để xử lý."; exit 0; fi
 
-# Đọc các release đang có (video-storage, video-storage-002, ...)
-while IFS= read -r tag; do
+# Đọc các release đã công khai (video-storage, video-storage-002, ...). Lấy id từ danh sách,
+# không gọi /releases/tags/<tag> vì endpoint đó trả 404 với bản nháp.
+while IFS=$'\t' read -r tag id; do
   [[ "$tag" =~ ^${PREFIX}(-([0-9]+))?$ ]] || continue
   idx=1; if [[ -n "${BASH_REMATCH[2]:-}" ]]; then idx=$((10#${BASH_REMATCH[2]})); fi
-  (( idx > maxidx )) && maxidx=$idx
-  id="$(gh api "repos/$GH_REPO/releases/tags/$tag" --jq .id)"
+  if (( idx > maxidx )); then maxidx=$idx; fi
   c=0; b=0
   while IFS=$'\t' read -r n s; do
     if [[ -n "$n" ]]; then used["$n"]=1; c=$((c + 1)); b=$((b + s)); fi
-  done < <(gh api --paginate "repos/$GH_REPO/releases/$id/assets?per_page=100" --jq '.[] | "\(.name)\t\(.size)"')
+  done < <(gh api --paginate "repos/$GH_REPO/releases/$id/assets?per_page=100" --jq '.[] | "\(.name)\t\(.size)"' </dev/null)
   rel_count["$tag"]=$c; rel_bytes["$tag"]=$b
-  cur="$tag"  # release có số lớn nhất (danh sách sắp xếp bên dưới)
-done < <(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[].tag_name' | sort -V)
+  cur="$tag"  # release có số lớn nhất (danh sách đã sắp xếp)
+done < <(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft == false) | "\(.tag_name)\t\(.id)"' </dev/null | sort -V)
 
 new_release() {
   local n=$((maxidx + 1)) tag
@@ -59,7 +59,8 @@ pick_release() {
 # Tên file an toàn cho URL, không trùng với file đã có
 make_name() {
   local base="$1" ext stem cand i=2
-  base="$(printf '%s' "$base" | iconv -c -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || printf '%s' "$base")"
+  # Bỏ dấu tiếng Việt: tách dấu (NFD) rồi xoá, đ→d
+  base="$(printf '%s' "$base" | perl -CSD -MUnicode::Normalize -pe '$_ = NFD($_); s/\pM//g; tr/đĐ/dD/' 2>/dev/null || printf '%s' "$base")"
   ext=".${base##*.}"; ext="${ext,,}"
   stem="${base%.*}"
   stem="$(printf '%s' "$stem" | sed -E 's/[^A-Za-z0-9._-]+/-/g; s/-+/-/g; s/^[-.]+//; s/[-.]+$//')"
@@ -95,7 +96,7 @@ for z in "${zips[@]}"; do
     mv "$f" "$stage/$name"
     ok=0
     for try in 1 2 3; do
-      if gh release upload "$tag" "$stage/$name" --clobber; then ok=1; break; fi
+      if gh release upload "$tag" "$stage/$name" --clobber </dev/null; then ok=1; break; fi
       echo "Tải lên lỗi (lần $try/3), thử lại..."; sleep $((try * 10))
     done
     rm -f "$stage/$name"
@@ -120,8 +121,11 @@ fi
 if (( ${#del[@]} )); then
   git config user.name "github-actions[bot]"
   git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-  git rm -q -- "${del[@]}"
-  git commit -q -m "Đã tải video lên release, xoá ${#del[@]} file zip khỏi inbox"
+  git rm -q --ignore-unmatch -- "${del[@]}"
+  rm -f -- "${del[@]}"
+  if ! git diff --cached --quiet; then
+    git commit -q -m "Đã tải video lên release, xoá ${#del[@]} file zip khỏi inbox"
+  fi
   for i in 1 2 3; do
     if git pull -q --rebase origin "$BRANCH" && git push -q origin "HEAD:$BRANCH"; then break; fi
     sleep 3
