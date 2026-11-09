@@ -1,7 +1,7 @@
 name: Tải video lên release (video-storage)
 
 # Đẩy file .zip vào thư mục inbox/ (hoặc bấm chạy tay kèm link zip) → giải nén,
-# tải từng video lên release "video-storage", rồi xoá zip khỏi inbox/.
+# tải từng video lên release "video-storage" (đầy thì tự tạo video-storage-002, ...), rồi xoá zip khỏi inbox/.
 on:
   push:
     branches: [main]
@@ -35,3 +35,6 @@ jobs:
           GH_REPO: ${{ github.repository }}
           BRANCH: ${{ github.event.repository.default_branch }}
           ZIP_URL: ${{ inputs.zip_url }}
+          # Release đầy (quá số file hoặc quá dung lượng) thì tự tạo release mới. Sửa 2 số này nếu muốn.
+          RELEASE_MAX_GB: "2"
+          RELEASE_MAX_ASSETS: "900"
