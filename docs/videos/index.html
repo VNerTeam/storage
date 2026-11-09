@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src https://api.github.com; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Kho video</title>
+<style>
+:root{--bg:#f6f8fa;--card:#fff;--fg:#1f2328;--mut:#656d76;--bd:#d0d7de;--pri:#0f766e;--prif:#fff}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--card:#161b22;--fg:#e6edf3;--mut:#8b949e;--bd:#30363d;--pri:#2dd4bf;--prif:#04201d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
+main{max-width:860px;margin:0 auto;padding:20px 14px}
+h1{margin:0 0 4px;font-size:1.4rem}.mut{color:var(--mut);font-size:.9rem}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
+input{flex:1;min-width:160px;padding:9px 12px;border:1px solid var(--bd);border-radius:8px;background:var(--card);color:var(--fg);font:inherit}
+button,a.btn{padding:8px 14px;border:1px solid var(--bd);border-radius:8px;background:var(--card);color:var(--fg);font:inherit;cursor:pointer;text-decoration:none}
+button.pri{background:var(--pri);color:var(--prif);border-color:var(--pri)}
+.row{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.nm{flex:1;min-width:200px;word-break:break-all}.act{display:flex;gap:6px}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--pri);color:var(--prif);padding:8px 16px;border-radius:20px;opacity:0;transition:opacity .2s;pointer-events:none}
+#toast.on{opacity:1}.err{color:#cf222e}
+</style>
+</head>
+<body>
+<main>
+  <h1>Kho video</h1>
+  <div class="mut" id="info">Đang tải danh sách…</div>
+  <div class="bar">
+    <input id="q" type="search" placeholder="Tìm theo tên file…" aria-label="Tìm">
+    <button id="all" class="pri">Copy tất cả link</button>
+    <button id="reload">Làm mới</button>
+  </div>
+  <div id="list"></div>
+</main>
+<div id="toast" role="status"></div>
+<script>
+const TAG = 'video-storage';
+const $ = (id) => document.getElementById(id);
+let items = [];
+
+function repoName() {
+  const p = new URLSearchParams(location.search).get('repo');
+  if (p && /^[\w.-]+\/[\w.-]+$/.test(p)) return p;
+  if (!location.hostname.endsWith('.github.io')) return null;
+  const owner = location.hostname.split('.')[0];
+  const segs = location.pathname.split('/').filter((s) => s && s !== 'index.html');
+  if (segs[segs.length - 1] === 'videos') segs.pop();
+  return `${owner}/${segs[0] || owner + '.github.io'}`;
+}
+const fmt = (n) => (n >= 2 ** 30 ? (n / 2 ** 30).toFixed(2) + ' GB' : (n / 2 ** 20).toFixed(1) + ' MB');
+function toast(t) { const e = $('toast'); e.textContent = t; e.classList.add('on'); setTimeout(() => e.classList.remove('on'), 1500); }
+async function copy(text) {
+  try { await navigator.clipboard.writeText(text); }
+  catch { const t = document.createElement('textarea'); t.value = text; document.body.append(t); t.select(); document.execCommand('copy'); t.remove(); }
+  toast('Đã copy');
+}
+async function api(url) {
+  const r = await fetch(url, { headers: { Accept: 'application/vnd.github+json' } });
+  if (r.status === 404) throw new Error('Chưa có release "' + TAG + '" (hãy upload zip vào inbox/ trước).');
+  if (r.status === 403 || r.status === 429) throw new Error('GitHub đang giới hạn lượt gọi (60 lượt/giờ/IP). Thử lại sau.');
+  if (!r.ok) throw new Error('GitHub trả lỗi ' + r.status);
+  return r.json();
+}
+async function load() {
+  const repo = repoName();
+  if (!repo) { $('info').textContent = 'Thêm ?repo=owner/repo vào địa chỉ trang.'; return; }
+  $('info').textContent = 'Đang tải danh sách…'; $('list').replaceChildren();
+  try {
+    const rel = await api(`https://api.github.com/repos/${repo}/releases/tags/${TAG}`);
+    const all = [];
+    for (let p = 1; p <= 10; p++) {
+      const a = await api(`https://api.github.com/repos/${repo}/releases/${rel.id}/assets?per_page=100&page=${p}`);
+      all.push(...a);
+      if (a.length < 100) break;
+    }
+    items = all.filter((a) => a.state === 'uploaded' && a.browser_download_url.startsWith('https://github.com/'))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    render();
+  } catch (e) { const d = $('info'); d.textContent = e.message; d.className = 'err'; }
+}
+function render() {
+  const f = $('q').value.trim().toLowerCase();
+  const shown = items.filter((a) => a.name.toLowerCase().includes(f));
+  const total = shown.reduce((s, a) => s + a.size, 0);
+  $('info').className = 'mut';
+  $('info').textContent = `${shown.length}/${items.length} video • ${fmt(total)}`;
+  const list = $('list'); list.replaceChildren();
+  for (const a of shown) {
+    const row = document.createElement('div'); row.className = 'row';
+    const nm = document.createElement('div'); nm.className = 'nm';
+    nm.textContent = a.name;
+    const sub = document.createElement('div'); sub.className = 'mut';
+    sub.textContent = `${fmt(a.size)} • ${new Date(a.created_at).toLocaleString('vi-VN')}`;
+    nm.append(sub);
+    const act = document.createElement('div'); act.className = 'act';
+    const c = document.createElement('button'); c.className = 'pri'; c.textContent = 'Copy link';
+    c.onclick = () => copy(a.browser_download_url);
+    const o = document.createElement('a'); o.className = 'btn'; o.textContent = 'Tải'; o.href = a.browser_download_url; o.rel = 'noopener';
+    act.append(c, o); row.append(nm, act); list.append(row);
+  }
+}
+$('q').addEventListener('input', render);
+$('reload').onclick = load;
+$('all').onclick = () => {
+  const f = $('q').value.trim().toLowerCase();
+  const urls = items.filter((a) => a.name.toLowerCase().includes(f)).map((a) => a.browser_download_url);
+  if (urls.length) copy(urls.join('\n'));
+};
+load();
+</script>
+</body>
+</html>
