@@ -34,9 +34,9 @@ button.pri{background:var(--pri);color:var(--prif);border-color:var(--pri)}
 </main>
 <div id="toast" role="status"></div>
 <script>
-const TAG = 'video-storage';
+const TAG_RE = /^video-storage(-\d+)?$/;
 const $ = (id) => document.getElementById(id);
-let items = [];
+let items = [], nRel = 0;
 
 function repoName() {
   const p = new URLSearchParams(location.search).get('repo');
@@ -56,41 +56,56 @@ async function copy(text) {
 }
 async function api(url) {
   const r = await fetch(url, { headers: { Accept: 'application/vnd.github+json' } });
-  if (r.status === 404) throw new Error('Chưa có release "' + TAG + '" (hãy upload zip vào inbox/ trước).');
+  if (r.status === 404) throw new Error('Không tìm thấy repo (thử thêm ?repo=owner/repo vào địa chỉ).');
   if (r.status === 403 || r.status === 429) throw new Error('GitHub đang giới hạn lượt gọi (60 lượt/giờ/IP). Thử lại sau.');
   if (!r.ok) throw new Error('GitHub trả lỗi ' + r.status);
   return r.json();
 }
+async function listAssets(rel) {
+  let a = rel.assets || [];
+  if (a.length < 30) return a;
+  a = [];
+  for (let p = 1; p <= 10; p++) {
+    const b = await api(`${rel.assets_url}?per_page=100&page=${p}`);
+    a.push(...b);
+    if (b.length < 100) break;
+  }
+  return a;
+}
 async function load() {
   const repo = repoName();
   if (!repo) { $('info').textContent = 'Thêm ?repo=owner/repo vào địa chỉ trang.'; return; }
-  $('info').textContent = 'Đang tải danh sách…'; $('list').replaceChildren();
+  $('info').className = 'mut'; $('info').textContent = 'Đang tải danh sách…'; $('list').replaceChildren();
   try {
-    const rel = await api(`https://api.github.com/repos/${repo}/releases/tags/${TAG}`);
-    const all = [];
+    const rels = [];
     for (let p = 1; p <= 10; p++) {
-      const a = await api(`https://api.github.com/repos/${repo}/releases/${rel.id}/assets?per_page=100&page=${p}`);
-      all.push(...a);
-      if (a.length < 100) break;
+      const r = await api(`https://api.github.com/repos/${repo}/releases?per_page=100&page=${p}`);
+      rels.push(...r.filter((x) => TAG_RE.test(x.tag_name)));
+      if (r.length < 100) break;
     }
+    if (!rels.length) throw new Error('Chưa có release video-storage nào (hãy upload zip vào inbox/ trước).');
+    const all = [];
+    for (const rel of rels) for (const a of await listAssets(rel)) all.push({ ...a, tag: rel.tag_name });
+    nRel = rels.length;
     items = all.filter((a) => a.state === 'uploaded' && a.browser_download_url.startsWith('https://github.com/'))
       .sort((a, b) => b.created_at.localeCompare(a.created_at));
     render();
   } catch (e) { const d = $('info'); d.textContent = e.message; d.className = 'err'; }
 }
+const match = (a, f) => a.name.toLowerCase().includes(f) || a.tag.toLowerCase().includes(f);
 function render() {
   const f = $('q').value.trim().toLowerCase();
-  const shown = items.filter((a) => a.name.toLowerCase().includes(f));
+  const shown = items.filter((a) => match(a, f));
   const total = shown.reduce((s, a) => s + a.size, 0);
   $('info').className = 'mut';
-  $('info').textContent = `${shown.length}/${items.length} video • ${fmt(total)}`;
+  $('info').textContent = `${shown.length}/${items.length} video • ${nRel} release • ${fmt(total)}`;
   const list = $('list'); list.replaceChildren();
   for (const a of shown) {
     const row = document.createElement('div'); row.className = 'row';
     const nm = document.createElement('div'); nm.className = 'nm';
     nm.textContent = a.name;
     const sub = document.createElement('div'); sub.className = 'mut';
-    sub.textContent = `${fmt(a.size)} • ${new Date(a.created_at).toLocaleString('vi-VN')}`;
+    sub.textContent = `${fmt(a.size)} • ${a.tag} • ${new Date(a.created_at).toLocaleString('vi-VN')}`;
     nm.append(sub);
     const act = document.createElement('div'); act.className = 'act';
     const c = document.createElement('button'); c.className = 'pri'; c.textContent = 'Copy link';
@@ -103,7 +118,7 @@ $('q').addEventListener('input', render);
 $('reload').onclick = load;
 $('all').onclick = () => {
   const f = $('q').value.trim().toLowerCase();
-  const urls = items.filter((a) => a.name.toLowerCase().includes(f)).map((a) => a.browser_download_url);
+  const urls = items.filter((a) => match(a, f)).map((a) => a.browser_download_url);
   if (urls.length) copy(urls.join('\n'));
 };
 load();
