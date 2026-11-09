@@ -1,0 +1,37 @@
+name: Tải video lên release (video-storage)
+
+# Đẩy file .zip vào thư mục inbox/ (hoặc bấm chạy tay kèm link zip) → giải nén,
+# tải từng video lên release "video-storage", rồi xoá zip khỏi inbox/.
+on:
+  push:
+    branches: [main]
+    paths: ["inbox/*.zip"]
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: "Link https tới file zip (tuỳ chọn, dùng khi zip > 100 MB)"
+        type: string
+        required: false
+        default: ""
+
+concurrency:
+  group: video-storage
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  upload:
+    if: github.actor == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v7
+      - name: Giải nén và tải lên release
+        run: bash scripts/upload-videos.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+          ZIP_URL: ${{ inputs.zip_url }}
